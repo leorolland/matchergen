@@ -1,2 +1,3 @@
 matchergen
 examples/modeltest/human_matcher.go
+examples/modeltest/id_card_matcher.go

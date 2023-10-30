@@ -19,7 +19,17 @@ import (
 
 type Getter struct {
 	name       string
-	returnType string
+	returnType types.Type
+}
+
+func (g *Getter) returnTypeShort() string {
+	switch t := g.returnType.(type) {
+	case *types.Basic:
+		return t.String()
+	case *types.Named:
+		return fmt.Sprintf("%s.%s", t.Obj().Pkg().Name(), t.Obj().Name())
+	}
+	panic("unhandled return type")
 }
 
 func (g *Getter) nameAsPrivate() string {
@@ -64,18 +74,21 @@ func (f *File) genGetters(node ast.Node) bool {
 		return false
 	}
 
+	firstReturn := fun.Type.Results.List[0].Type
 	f.getters = append(f.getters, Getter{
 		name:       fun.Name.String(),
-		returnType: types.ExprString(fun.Type.Results.List[0].Type),
+		returnType: f.pkg.typesInfo.TypeOf(firstReturn),
 	})
+	// fmt.Printf(">>> %T\n", f.pkg.typesInfo.TypeOf(firstReturn))
 
 	return false
 }
 
 type Package struct {
-	name  string
-	defs  map[*ast.Ident]types.Object
-	files []*File
+	name      string
+	pkgPath   string
+	typesInfo *types.Info
+	files     []*File
 }
 
 type Generator struct {
@@ -111,9 +124,10 @@ func (g *Generator) parsePackage(patterns []string, tags []string) {
 func (g *Generator) addPackage(pkg *packages.Package) {
 	fmt.Printf("found package %s\n", pkg)
 	g.pkg = &Package{
-		name:  pkg.Name,
-		defs:  pkg.TypesInfo.Defs,
-		files: make([]*File, len(pkg.Syntax)),
+		name:      pkg.Name,
+		pkgPath:   pkg.PkgPath,
+		typesInfo: pkg.TypesInfo,
+		files:     make([]*File, len(pkg.Syntax)),
 	}
 
 	for i, file := range pkg.Syntax {
@@ -134,24 +148,32 @@ func (g *Generator) generate(typeName string) {
 			getters = append(getters, file.getters...)
 		}
 	}
-	fmt.Printf("found getters for struct %s: %s\n", typeName, getters)
 
 	matcherName := fmt.Sprintf("%sMatcher", typeName)
 	matcherReceiverName := string(unicode.ToLower(rune(matcherName[0])))
-
 	castedVarName := string(unicode.ToLower(rune(typeName[0]))) + typeName[1:]
 
 	g.Printf("package %s\n\n", "modeltest") // TODO: make it configurable
+	g.Printf("import (\n")
+	g.Printf("\t\"fmt\"\n\n")
+	g.Printf("\t\"%s\"\n", g.pkg.pkgPath)
+	for _, getter := range getters {
+		// add import if getter uses a non-basic type
+		if namedReturnType, isNamedReturnType := getter.returnType.(*types.Named); isNamedReturnType {
+			g.Printf("\t\"%s\"\n", namedReturnType.Obj().Pkg().Path())
+		}
+	}
+	g.Printf(")\n")
 	g.Printf("type %s struct {\n", matcherName)
 	g.Printf("\tcomparator *comparator\n\n")
 	for _, getter := range getters {
-		g.Printf("\t%s %s\n", getter.nameAsPrivate(), getter.returnType)
+		g.Printf("\t%s %s\n", getter.nameAsPrivate(), getter.returnTypeShort())
 	}
 	g.Printf("}\n\n")
 
 	g.Printf("func New%s(", matcherName)
 	for _, getter := range getters {
-		g.Printf("%s %s, ", getter.nameAsPrivate(), getter.returnType)
+		g.Printf("%s %s, ", getter.nameAsPrivate(), getter.returnTypeShort())
 	}
 	g.Printf(") *%s{\n", matcherName)
 	g.Printf("\treturn &%s{\n", matcherName)
@@ -163,7 +185,7 @@ func (g *Generator) generate(typeName string) {
 
 	g.Printf("func (%s *%s)Matches(arg interface{}) bool {\n", matcherReceiverName, matcherName)
 	g.Printf("\t%s.comparator = &comparator{}\n\n", matcherReceiverName)
-	g.Printf("\t%s, ok := arg.(*model.%s)\n", castedVarName, typeName)
+	g.Printf("\t%s, ok := arg.(*%s.%s)\n", castedVarName, g.pkg.name, typeName)
 	g.Printf("\tif !ok {\n")
 	g.Printf("\t\t%s.comparator.equal(\"type\", \"*%s.%s\", fmt.Sprintf(\"%%T\", arg))\n",
 		matcherReceiverName, g.pkg.name, typeName,
