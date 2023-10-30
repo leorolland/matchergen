@@ -77,7 +77,7 @@ func (h *HumanMatcher) Got(got interface{}) string {
 }
 
 func (h *HumanMatcher) String() string {
-	return getDiff(h.comparator.wanted)
+	return getValue(h.comparator.wanted)
 }
 ```
 
