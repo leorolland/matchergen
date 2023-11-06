@@ -1,5 +1,7 @@
 # gomock matcher generator
 
+Project has been continued [here](https://github.com/Joffref/genz)
+
 Generate [gomock matcher](https://pkg.go.dev/github.com/golang/mock/gomock#Matcher) implementations from your models.
 
 ```shell
